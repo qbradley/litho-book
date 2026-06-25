@@ -432,14 +432,12 @@ async fn call_openai_stream_api(
                     let chunk_str = String::from_utf8_lossy(&chunk);
                     buffer.push_str(&chunk_str);
 
-                    // 处理SSE格式的数据
-                    let lines: Vec<&str> = buffer.lines().collect();
-                    let mut processed_lines = 0;
+                    let ends_with_newline = buffer.ends_with('\n');
+                    let mut lines: Vec<String> = buffer.lines().map(str::to_string).collect();
+                    let incomplete_tail = if ends_with_newline { None } else { lines.pop() };
 
                     for line in &lines {
-                        if line.starts_with("data: ") {
-                            let data = &line[6..]; // 移除 "data: " 前缀
-
+                        if let Some(data) = line.strip_prefix("data: ") {
                             if data == "[DONE]" {
                                 // 流结束
                                 return;
@@ -448,35 +446,26 @@ async fn call_openai_stream_api(
                             // 尝试解析JSON
                             if let Ok(stream_response) =
                                 serde_json::from_str::<OpenAIStreamResponse>(data)
+                                && let Some(choice) = stream_response.choices.first()
                             {
-                                if let Some(choice) = stream_response.choices.first() {
-                                    if let Some(content) = &choice.delta.content {
-                                        if !content.is_empty() {
-                                            if tx.send(Ok(content.clone())).await.is_err() {
-                                                return; // 接收端已关闭
-                                            }
-                                        }
-                                    }
+                                if let Some(content) = &choice.delta.content
+                                    && !content.is_empty()
+                                    && tx.send(Ok(content.clone())).await.is_err()
+                                {
+                                    return; // 接收端已关闭
+                                }
 
-                                    // 检查是否完成
-                                    if choice.finish_reason.is_some() {
-                                        return;
-                                    }
+                                // 检查是否完成
+                                if choice.finish_reason.is_some() {
+                                    return;
                                 }
                             }
-                            processed_lines += 1;
-                        } else if line.is_empty() {
-                            processed_lines += 1;
-                        } else {
-                            processed_lines += 1;
                         }
                     }
 
-                    // 保留未处理的部分
-                    if processed_lines < lines.len() {
-                        buffer = lines[processed_lines..].join("\n");
-                    } else {
-                        buffer.clear();
+                    buffer.clear();
+                    if let Some(tail) = incomplete_tail {
+                        buffer.push_str(&tail);
                     }
                 }
                 Err(e) => {
@@ -601,4 +590,101 @@ fn normalize_lang(lang: &str) -> String {
 fn load_i18n_map(path: &Path) -> Option<HashMap<String, String>> {
     let content = fs::read_to_string(path).ok()?;
     serde_json::from_str::<HashMap<String, String>>(&content).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    fn make_test_app() -> (Router, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("test.md"), "# Test\nHello world").unwrap();
+        let tree = DocumentTree::new(dir.path()).unwrap();
+        let docs_path = dir.path().display().to_string().replace('\\', "/");
+        let router = create_router(tree, docs_path, "en".to_string());
+        (router, dir)
+    }
+
+    #[tokio::test]
+    async fn health_endpoint_returns_ok() {
+        let (app, _dir) = make_test_app();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn file_endpoint_returns_markdown_file() {
+        let (app, _dir) = make_test_app();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/file?file=test.md")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn file_endpoint_rejects_missing_file_param() {
+        let (app, _dir) = make_test_app();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/file")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn file_endpoint_returns_not_found_for_unknown_file() {
+        let (app, _dir) = make_test_app();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/file?file=missing.md")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn search_endpoint_returns_ok() {
+        let (app, _dir) = make_test_app();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/search?q=Hello")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
 }

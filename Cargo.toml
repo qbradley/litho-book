@@ -14,7 +14,7 @@ clap = { version = "4.5", features = ["derive"] }
 # Web服务框架
 axum = "0.8.4"
 tokio = { version = "1.47", features = ["full"] }
-tower = "0.5"
+tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["fs", "cors"] }
 
 # Markdown处理
@@ -48,3 +48,6 @@ futures = "0.3"
 # Unix系统调用 (用于权限检查)
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"

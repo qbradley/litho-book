@@ -359,7 +359,7 @@ impl DocumentTree {
             }
 
             // Also check filename matches
-            let file_name = file_path.split('/').last().unwrap_or(file_path);
+            let file_name = file_path.rsplit('/').next().unwrap_or(file_path);
             if file_name.to_lowercase().contains(&query_lower) {
                 relevance_score += 2.0; // Bonus for filename matches
             }
@@ -388,20 +388,87 @@ impl DocumentTree {
         results
     }
 
-    /// Highlight search matches in content
+    /// Highlight all search matches in content while escaping HTML-sensitive characters.
     fn highlight_matches(&self, content: &str, query: &str) -> String {
         let query_lower = query.to_lowercase();
         let content_lower = content.to_lowercase();
 
-        if let Some(start) = content_lower.find(&query_lower) {
-            let end = start + query.len();
-            let before = &content[..start];
-            let matched = &content[start..end];
-            let after = &content[end..];
+        let indices: Vec<usize> = content_lower
+            .match_indices(&query_lower)
+            .map(|(index, _)| index)
+            .collect();
 
-            format!("{}<mark>{}</mark>{}", before, matched, after)
-        } else {
-            content.to_string()
+        if indices.is_empty() {
+            return escape_html(content);
         }
+
+        let mut result = String::new();
+        let mut last_end = 0;
+        for start in indices {
+            let end = start + query.len();
+            result.push_str(&escape_html(&content[last_end..start]));
+            result.push_str("<mark>");
+            result.push_str(&escape_html(&content[start..end]));
+            result.push_str("</mark>");
+            last_end = end;
+        }
+        result.push_str(&escape_html(&content[last_end..]));
+        result
+    }
+}
+
+fn escape_html(content: &str) -> String {
+    content
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tree_with_file(name: &str, content: &str) -> (tempfile::TempDir, DocumentTree) {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(name), content).unwrap();
+        let tree = DocumentTree::new(dir.path()).unwrap();
+        (dir, tree)
+    }
+
+    #[test]
+    fn search_highlights_all_matches_and_escapes_html() {
+        let (_dir, tree) = tree_with_file("test.md", "<b>foo</b> & foo");
+        let results = tree.search_content("foo");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].matches[0].highlighted_content,
+            "&lt;b&gt;<mark>foo</mark>&lt;/b&gt; &amp; <mark>foo</mark>"
+        );
+    }
+
+    #[test]
+    fn search_escapes_html_when_filename_match_has_no_content_match() {
+        let (_dir, tree) = tree_with_file("foo.md", "<script>alert(1)</script>");
+        let results = tree.search_content("foo");
+
+        assert_eq!(results.len(), 0);
+        assert_eq!(
+            tree.highlight_matches("<script>alert(1)</script>", "missing"),
+            "&lt;script&gt;alert(1)&lt;/script&gt;"
+        );
+    }
+
+    #[test]
+    fn document_tree_ignores_hidden_and_non_markdown_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".hidden.md"), "hidden").unwrap();
+        std::fs::write(dir.path().join("ignored.txt"), "ignored").unwrap();
+        std::fs::write(dir.path().join("visible.md"), "visible").unwrap();
+
+        let tree = DocumentTree::new(dir.path()).unwrap();
+
+        assert_eq!(tree.stats.total_files, 1);
+        assert_eq!(tree.root.children[0].name, "visible.md");
     }
 }
