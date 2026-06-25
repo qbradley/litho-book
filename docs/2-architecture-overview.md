@@ -365,7 +365,7 @@ pub struct SearchResult {
 `SearchResult` contains enough information for the frontend to display context and navigate to the matching document.
 
 ### Performance Optimization Strategy
-- Build indexes once at startup to avoid repeated scans.
+- Build indexes at startup and refresh them when file-system changes are detected.
 - Keep frequently used structures in memory.
 - Use lazy content reads for detailed document views when applicable.
 - Use Tokio for non-blocking I/O and high-concurrency request handling.
@@ -412,7 +412,7 @@ litho-book --path ./docs --host 0.0.0.0 --port 3000
 - Extend the frontend with additional document navigation features.
 
 #### Improvement Suggestions
-1. Add incremental indexing so large document libraries do not require a full rebuild on every startup.
+1. Add incremental indexing so large document libraries do not require a full rebuild after file changes.
 2. Add cache snapshots to reduce startup time.
 3. Add explicit timeout and retry policy for GitHub Models calls.
 4. Add a configuration file for model, endpoint, and UI preferences while keeping `GITHUB_TOKEN` external.

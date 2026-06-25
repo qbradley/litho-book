@@ -2903,7 +2903,8 @@
             initializeMermaid();
 
             // Document tree data
-            const treeData = {{ tree_json|safe }};
+            let treeData = {{ tree_json|safe }};
+            let treeDataSnapshot = JSON.stringify(treeData);
             let currentFile = null;
             const currentFileStorageKey = 'litho-book-current-file';
             let allFiles = [];
@@ -3084,6 +3085,45 @@
 
                 html += '</div>';
                 treeContainer.innerHTML = html;
+            }
+
+            async function refreshDocumentTreeFromServer() {
+                try {
+                    const response = await fetch('/api/tree');
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+
+                    const nextTreeData = await response.json();
+                    const nextSnapshot = JSON.stringify(nextTreeData);
+                    if (nextSnapshot === treeDataSnapshot) {
+                        return;
+                    }
+
+                    treeData = nextTreeData;
+                    treeDataSnapshot = nextSnapshot;
+                    originalTreeData = nextTreeData;
+                    allFiles = [];
+                    collectFiles(treeData);
+
+                    const treeContainer = document.getElementById('tree-container');
+                    const query = document.getElementById('searchInput')?.value.trim();
+                    if (query) {
+                        performSearch(query);
+                    } else {
+                        treeContainer.innerHTML = '';
+                        renderTreeChildren(treeData, treeContainer);
+                    }
+
+                    if (currentFile) {
+                        await loadFile(currentFile, {
+                            updateHistory: false,
+                            forceReload: true,
+                        });
+                    }
+                } catch (error) {
+                    console.warn('Failed to refresh document tree:', error);
+                }
             }
 
             // Set search mode
@@ -3371,7 +3411,7 @@
 
             // Load file content
             async function loadFile(filePath, options = {}) {
-                if (currentFile === filePath) return;
+                if (currentFile === filePath && !options.forceReload) return;
                 const updateHistory = options.updateHistory !== false;
                 const replaceHistory = options.replaceHistory === true;
                 const throwOnError = options.throwOnError === true;
@@ -3745,6 +3785,7 @@
 
                 // Initialize default document loading (with fallback strategy)
                 initializeDefaultDocument();
+                setInterval(refreshDocumentTreeFromServer, 2000);
             });
 
             window.addEventListener('popstate', () => {

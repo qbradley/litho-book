@@ -196,7 +196,7 @@ The system uses explicit module boundaries and interfaces for loose coupling:
 
 - **Concurrency control**:
   - All read operations, including browsing and search, use lock-free concurrent access.
-  - The document tree is built once at startup and is immutable at runtime.
+  - The document tree is built at startup and refreshed at runtime when the filesystem watcher detects Markdown changes.
   - AI streaming responses use independent `mpsc` channels for asynchronous communication.
 
 ### Data Transfer and Sharing

@@ -274,7 +274,7 @@ let app = Router::new()
 | Hardcoded API key | Load it from the `GITHUB_TOKEN` environment variable |
 | Inline HTML template | Move it to an external `templates/index.html.tpl` file to avoid recompilation |
 | Missing configuration file | Add `litho-book.toml` support for persistent configuration |
-| No hot-reload mechanism | Watch file changes and dynamically rebuild `DocumentTree` |
+| Full-tree rebuild on file changes | Consider incremental updates for very large documentation sets |
 | High memory usage | Add an LRU cache for rendered results, for example with the `lru` crate |
 
 ---

@@ -337,8 +337,8 @@ Although the current implementation already performs well, several optimizations
 - **Search-result cache**: cache results for common queries to improve response speed.
 
 #### Incremental Updates
-- **File watching**: use the `notify` crate to monitor file-system changes.
-- **Hot reload**: incrementally update `DocumentTree` when documents change instead of rebuilding it completely.
+- **File watching**: the server uses the `notify` crate to monitor file-system changes.
+- **Hot reload**: the current implementation rebuilds `DocumentTree` when documents change; a future optimization could update it incrementally.
 
 #### Index Optimization
 - **Inverted index**: refactor `search_index` into a term-based inverted index.

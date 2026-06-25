@@ -6,20 +6,26 @@ use axum::{
     routing::{get, post},
 };
 use futures::stream::Stream;
+use notify::{
+    Config, Event as NotifyEvent, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
+    event::{CreateKind, ModifyKind, RemoveKind, RenameMode},
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::fs;
-use std::path::Path;
-use std::time::Duration;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
 use tower_http::{cors::CorsLayer, services::ServeDir};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::filesystem::{DocumentTree, SearchResult};
 
 #[derive(Clone)]
 pub struct AppState {
-    pub doc_tree: DocumentTree,
+    pub doc_tree: Arc<RwLock<DocumentTree>>,
     pub docs_path: String,
     pub lang: String,
 }
@@ -106,7 +112,15 @@ pub struct StreamEvent {
 }
 
 /// Create the main application router
-pub fn create_router(doc_tree: DocumentTree, docs_path: String, lang: String) -> Router {
+pub fn create_router(
+    doc_tree: DocumentTree,
+    docs_dir: PathBuf,
+    docs_path: String,
+    lang: String,
+) -> Router {
+    let doc_tree = Arc::new(RwLock::new(doc_tree));
+    start_document_watcher(docs_dir.clone(), Arc::clone(&doc_tree));
+
     let state = AppState {
         doc_tree,
         docs_path,
@@ -126,11 +140,103 @@ pub fn create_router(doc_tree: DocumentTree, docs_path: String, lang: String) ->
         .with_state(state)
 }
 
+fn start_document_watcher(docs_dir: PathBuf, doc_tree: Arc<RwLock<DocumentTree>>) {
+    let handle = tokio::runtime::Handle::current();
+
+    std::thread::spawn(move || {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut watcher = match RecommendedWatcher::new(tx, Config::default()) {
+            Ok(watcher) => watcher,
+            Err(e) => {
+                warn!("Failed to initialize filesystem watcher: {}", e);
+                return;
+            }
+        };
+
+        if let Err(e) = watcher.watch(&docs_dir, RecursiveMode::Recursive) {
+            warn!(
+                "Failed to watch documentation directory {}: {}",
+                docs_dir.display(),
+                e
+            );
+            return;
+        }
+
+        info!(
+            "Watching documentation directory for changes: {}",
+            docs_dir.display()
+        );
+
+        let mut pending_rebuild = false;
+        let mut last_event = Instant::now();
+        loop {
+            match rx.recv_timeout(Duration::from_millis(250)) {
+                Ok(Ok(event)) => {
+                    if should_reload_for_event(&event) {
+                        debug!("Detected documentation filesystem change: {:?}", event.kind);
+                        pending_rebuild = true;
+                        last_event = Instant::now();
+                    }
+                }
+                Ok(Err(e)) => {
+                    warn!("Filesystem watch error: {}", e);
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    if pending_rebuild && last_event.elapsed() >= Duration::from_millis(250) {
+                        match DocumentTree::new(&docs_dir) {
+                            Ok(new_tree) => {
+                                let stats = new_tree.get_stats().clone();
+                                handle.block_on(async {
+                                    *doc_tree.write().await = new_tree;
+                                });
+                                info!(
+                                    "Reloaded documentation tree: {} files, {} directories, total size: {}",
+                                    stats.total_files,
+                                    stats.total_dirs,
+                                    format_bytes(stats.total_size)
+                                );
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "Failed to reload documentation tree after filesystem change: {}",
+                                    e
+                                );
+                            }
+                        }
+                        pending_rebuild = false;
+                    }
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    warn!("Filesystem watcher disconnected");
+                    break;
+                }
+            }
+        }
+    });
+}
+
+fn should_reload_for_event(event: &NotifyEvent) -> bool {
+    matches!(
+        event.kind,
+        EventKind::Create(CreateKind::Any | CreateKind::File | CreateKind::Folder)
+            | EventKind::Modify(
+                ModifyKind::Any
+                    | ModifyKind::Data(_)
+                    | ModifyKind::Metadata(_)
+                    | ModifyKind::Name(
+                        RenameMode::Any | RenameMode::From | RenameMode::To | RenameMode::Both
+                    )
+            )
+            | EventKind::Remove(RemoveKind::Any | RemoveKind::File | RemoveKind::Folder)
+    )
+}
+
 /// Serve the main index page
 async fn index_handler(State(state): State<AppState>) -> Result<Html<String>, StatusCode> {
     debug!("Serving index page");
 
-    let tree_json = serde_json::to_string(&state.doc_tree.root).map_err(|e| {
+    let doc_tree = state.doc_tree.read().await;
+    let tree_json = serde_json::to_string(&doc_tree.root).map_err(|e| {
         error!("Failed to serialize document tree: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
@@ -151,16 +257,16 @@ async fn get_file_handler(
 
     debug!("Requesting file: {}", file_path);
 
-    let content = state.doc_tree.get_file_content(&file_path).map_err(|e| {
+    let doc_tree = state.doc_tree.read().await;
+    let content = doc_tree.get_file_content(&file_path).map_err(|e| {
         error!("Failed to read file {}: {}", file_path, e);
         StatusCode::NOT_FOUND
     })?;
 
-    let html = state.doc_tree.render_markdown(&content);
+    let html = doc_tree.render_markdown(&content);
 
     // Get file metadata if available
-    let file_info = state
-        .doc_tree
+    let file_info = doc_tree
         .file_map
         .get(&file_path)
         .and_then(|path| std::fs::metadata(path).ok())
@@ -193,7 +299,8 @@ async fn get_file_handler(
 /// Get the document tree structure
 async fn get_tree_handler(State(state): State<AppState>) -> Json<serde_json::Value> {
     debug!("Serving document tree");
-    Json(serde_json::to_value(&state.doc_tree.root).unwrap_or_default())
+    let doc_tree = state.doc_tree.read().await;
+    Json(serde_json::to_value(&doc_tree.root).unwrap_or_default())
 }
 
 /// Search for content with full-text search
@@ -213,7 +320,8 @@ async fn search_handler(
 
     debug!("Searching for: {}", query);
 
-    let results = state.doc_tree.search_content(&query);
+    let doc_tree = state.doc_tree.read().await;
+    let results = doc_tree.search_content(&query);
     let total = results.len();
 
     debug!("Found {} results matching query: {}", total, query);
@@ -227,7 +335,8 @@ async fn search_handler(
 
 /// Get statistics about the document tree
 async fn stats_handler(State(state): State<AppState>) -> Json<StatsResponse> {
-    let stats = state.doc_tree.get_stats();
+    let doc_tree = state.doc_tree.read().await;
+    let stats = doc_tree.get_stats();
 
     let formatted_size = format_bytes(stats.total_size);
 
@@ -607,7 +716,7 @@ mod tests {
         std::fs::write(dir.path().join("test.md"), "# Test\nHello world").unwrap();
         let tree = DocumentTree::new(dir.path()).unwrap();
         let docs_path = dir.path().display().to_string().replace('\\', "/");
-        let router = create_router(tree, docs_path, "en".to_string());
+        let router = create_router(tree, dir.path().to_path_buf(), docs_path, "en".to_string());
         (router, dir)
     }
 
@@ -689,5 +798,35 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn file_endpoint_picks_up_new_file_after_watch_reload() {
+        let (app, dir) = make_test_app();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        std::fs::write(dir.path().join("added.md"), "# Added\nNew content").unwrap();
+
+        let mut last_status = StatusCode::NOT_FOUND;
+        for _ in 0..50 {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/file?file=added.md")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            last_status = response.status();
+            if last_status == StatusCode::OK {
+                return;
+            }
+
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        assert_eq!(last_status, StatusCode::OK);
     }
 }

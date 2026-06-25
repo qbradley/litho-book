@@ -29,6 +29,7 @@ anyhow = "1.0"
 thiserror = "1.0"
 
 # File system
+notify = "8"
 walkdir = "2.5"
 
 # Logging
