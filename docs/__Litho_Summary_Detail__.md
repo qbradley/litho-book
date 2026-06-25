@@ -282,12 +282,12 @@ Provides high-level domain partitioning, module relationships, and core business
           "code_paths": [
             "src/filesystem.rs"
           ],
-          "description": "Recursively scans the specified directory and builds a tree structure containing file paths, metadata, and content. It indexes only .md files, ignores hidden files, and supports file type identification and path mapping.",
+          "description": "Recursively scans the specified directory and builds a tree structure containing file paths, metadata, and content. It indexes only .md files, ignores hidden files, traverses dot directories, and supports file type identification and path mapping.",
           "importance": 9.0,
           "key_functions": [
             "Recursively traverse directories",
             "Build FileNode nodes and the DocumentTree structure",
-            "Filter non-Markdown files and hidden files",
+            "Filter non-Markdown files and hidden files while traversing dot directories",
             "Build an index from file paths to content"
           ],
           "name": "Document Tree Construction"
@@ -654,7 +654,7 @@ Code analysis results from preprocessing, including function, class, and module 
         "version": null
       }
     ],
-    "detailed_description": "filesystem.rs is a model component for building and managing the documentation directory tree. Its core function is to recursively scan a specified directory, convert the filesystem structure into an in-memory tree data structure (DocumentTree), and support full-text search, Markdown rendering, and file content reading. It abstracts files and directories in the filesystem as FileNode nodes, and uses DocumentTree to uniformly manage file path mappings, search indexes, and statistics. This component is specifically optimized for Markdown files: it indexes only .md files and ignores hidden files. It also implements keyword-based full-text search, including title weighting, term-frequency weighting, context extraction, and result sorting, ultimately returning search results with highlighting and relevance scores. In addition, it provides Markdown-to-HTML rendering for frontend display.",
+    "detailed_description": "filesystem.rs is a model component for building and managing the documentation directory tree. Its core function is to recursively scan a specified directory, convert the filesystem structure into an in-memory tree data structure (DocumentTree), and support full-text search, Markdown rendering, and file content reading. It abstracts files and directories in the filesystem as FileNode nodes, and uses DocumentTree to uniformly manage file path mappings, search indexes, and statistics. This component is specifically optimized for Markdown files: it indexes only .md files, ignores hidden files, and traverses dot directories. It also implements keyword-based full-text search, including title weighting, term-frequency weighting, context extraction, and result sorting, ultimately returning search results with highlighting and relevance scores. In addition, it provides Markdown-to-HTML rendering for frontend display.",
     "interfaces": [
       {
         "description": "Data structure representing a single node (file or directory) in the filesystem; supports serialization and deserialization for cross-service transfer or persistence.",

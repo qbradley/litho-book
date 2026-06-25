@@ -110,7 +110,7 @@ pub fn new(docs_dir: &Path) -> anyhow::Result<Self>
 2. **Read directory contents**: use `std::fs::read_dir()` to obtain directory entries.
 3. **Sort entries**: sort by type, with directories first, and then by name to ensure stable display order.
 4. **Filter files**:
-   - Skip hidden files whose names start with `.`.
+   - Skip hidden files whose names start with `.`, while traversing dot directories like normal directories.
    - Keep only files with the `.md` extension.
 5. **Build recursively**: call `build_tree()` on each valid entry for depth-first traversal.
 6. **Create a virtual root**: wrap the actual directory contents in a unified tree root.

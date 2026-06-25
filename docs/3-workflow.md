@@ -359,7 +359,7 @@ flowchart LR
 | Rule | Implementation location | Logic |
 |------|--------------------------|-------|
 | Index only `.md` files | filesystem.rs | `path.extension() == Some("md")` |
-| Ignore hidden files | filesystem.rs | Skip entries where `name.starts_with('.')`. |
+| Ignore hidden files | filesystem.rs | Skip dot files while traversing dot directories like normal directories. |
 | Directories first | filesystem.rs | Directories are ordered before files in `sort_by`. |
 | Heading-weighted search | filesystem.rs | `line.trim().starts_with('#')` ×3.0 |
 | Return at most 50 results | filesystem.rs | `results.truncate(50)` |

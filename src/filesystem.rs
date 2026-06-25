@@ -84,10 +84,10 @@ impl DocumentTree {
         for entry in entries {
             let path = entry.path();
 
-            // Skip hidden files and non-markdown files (unless it's a directory)
+            // Skip hidden files and non-markdown files, but traverse dot directories.
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if name.starts_with('.') {
-                    debug!("Skipping hidden file/directory: {}", name);
+                if path.is_file() && name.starts_with('.') {
+                    debug!("Skipping hidden file: {}", name);
                     continue;
                 }
 
@@ -219,10 +219,10 @@ impl DocumentTree {
         for entry in entries {
             let path = entry.path();
 
-            // Skip hidden files and non-markdown files (unless it's a directory)
+            // Skip hidden files and non-markdown files, but traverse dot directories.
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if name.starts_with('.') {
-                    debug!("Skipping hidden file/directory: {}", name);
+                if path.is_file() && name.starts_with('.') {
+                    debug!("Skipping hidden file: {}", name);
                     continue;
                 }
 
@@ -470,5 +470,22 @@ mod tests {
 
         assert_eq!(tree.stats.total_files, 1);
         assert_eq!(tree.root.children[0].name, "visible.md");
+    }
+
+    #[test]
+    fn document_tree_includes_dot_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let paw_dir = dir.path().join(".paw");
+        std::fs::create_dir(&paw_dir).unwrap();
+        std::fs::write(paw_dir.join("notes.md"), "dot directory content").unwrap();
+
+        let tree = DocumentTree::new(dir.path()).unwrap();
+
+        assert_eq!(tree.stats.total_files, 1);
+        assert!(tree.file_map.contains_key(".paw/notes.md"));
+        assert_eq!(
+            tree.get_file_content(".paw/notes.md").unwrap(),
+            "dot directory content"
+        );
     }
 }

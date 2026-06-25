@@ -316,7 +316,7 @@ Failure handling is intentionally conservative. Browsing and search should conti
 #### Document Tree Construction Algorithm
 The tree builder walks the filesystem recursively:
 1. Read directory entries.
-2. Ignore hidden files and unsupported entries.
+2. Ignore hidden files and unsupported entries while traversing dot directories.
 3. For Markdown files, record metadata, map logical paths, and add lines to `search_index`.
 4. For directories, recurse into child entries.
 5. Sort directories before files and then alphabetically.
